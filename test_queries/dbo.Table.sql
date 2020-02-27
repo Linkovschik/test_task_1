@@ -1,0 +1,6 @@
+﻿CREATE TABLE [dbo].[Table]
+(
+	[Filename] INT NOT NULL PRIMARY KEY, 
+    [FilePath] NVARCHAR(50) NOT NULL, 
+    [Result] NVARCHAR(50) NOT NULL DEFAULT 'DBERROR'
+)
