@@ -23,7 +23,7 @@ namespace test_task_1
             public string GetAddQuery()
             {
                 string table_name = "Results";
-                return "INSERT INTO " + "\'" + table_name + "\'" + " (HashSum,FileName,FilePath)\n" +
+                return "INSERT INTO " +  table_name + " (HashSum,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + hash_sum + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");"; 
             }
         }
@@ -41,7 +41,7 @@ namespace test_task_1
             public string GetAddQuery()
             {
                 string table_name = "Errors";
-                return "INSERT INTO " + "\'" + table_name + "\'" + " (Message,FileName,FilePath)\n" +
+                return "INSERT INTO " + table_name + " (Message,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + message + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");";
             }
         }
@@ -49,6 +49,7 @@ namespace test_task_1
         static object locker_queue = new object();
         static object locker_results = new object();
         static object locker_errors = new object();
+        static object locker_db = new object();
 
         static void Main(string[] args)
         {
@@ -56,25 +57,9 @@ namespace test_task_1
             Console.WriteLine("На следующей строчке введите путь к каталогу:");
             string catalog_path = Console.ReadLine();
 
-            string errors_creation_query =
-                "if not exists(select * from sysobjects where name = 'Errors')" +
-                "CREATE TABLE [dbo].[Errors]" +
-                "([Id] INT IDENTITY(1,1)," +
-                "[Message] NVARCHAR(50) NOT NULL," +
-                "[FileName] NVARCHAR(50) NOT NULL," +
-                "[FilePath] NVARCHAR(50) NOT NULL," +
-                "PRIMARY KEY CLUSTERED([Id] ASC));";
+           
 
-            string results_creation_query =
-                "if not exists(select * from sys.tables where name = 'Results')" +
-                "CREATE TABLE [dbo].[Results]" +
-                "([Id]  INT IDENTITY(1,1)," +
-                "[HashSum] NVARCHAR(50) NOT NULL," +
-                "[FileName] NVARCHAR(50) NOT NULL," +
-                "[FilePath] VARCHAR(50)  NOT NULL," +
-                "PRIMARY KEY CLUSTERED([Id] ASC));";
-
-            string connectionString = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True";
+            //string connectionString = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True";
 
             //using (SqlConnection connection = new SqlConnection(connectionString))
             //{
@@ -94,6 +79,7 @@ namespace test_task_1
             errors = new List<ErrorResult>();
             SearchSource search_source = new SearchSource(catalog_path, file_queue, errors);
             HashCalculator hash_calculator = new HashCalculator(file_queue, calculate_results, errors, search_source);
+            DbSaver dbSaver = new DbSaver(calculate_results, errors, hash_calculator, @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True");
             
 
             Thread read_thread = new Thread(new ThreadStart(search_source.StartSearch));
@@ -104,9 +90,13 @@ namespace test_task_1
             work_thread.Name = "Work";
             work_thread.Start();
 
+            Thread save_thread = new Thread(new ThreadStart(dbSaver.SaveToDB));
+            save_thread.Name = "SaveToDb";
+            save_thread.Start();
+
             while (true)
             {
-                if ((read_thread.ThreadState == ThreadState.Stopped && work_thread.ThreadState == ThreadState.Stopped))
+                if ((read_thread.ThreadState == ThreadState.Stopped && work_thread.ThreadState == ThreadState.Stopped && save_thread.ThreadState == ThreadState.Stopped))
                 {
                     foreach (var res in calculate_results)
                     {
@@ -130,18 +120,18 @@ namespace test_task_1
             //ссылка на список ошибок
             private List<ErrorResult> errors;
             //переменная, сообщающая о конце работы SearchSource
-            public bool worksDone { get; private set; }
+            public bool Works_done { get; private set; }
             public SearchSource(string catalog_path, Queue<string> files_to_handle, List<ErrorResult> errors)
             {
                 this.files_to_handle = files_to_handle;
                 this.catalog_path = catalog_path;
-                this.errors = errors; 
-                worksDone = false;
+                this.errors = errors;
+                Works_done = false;
             }
             public void StartSearch()
             {
                 search(catalog_path, files_to_handle, errors);
-                worksDone = true;
+                Works_done = true;
             }
             private void search(string catalog_path, Queue<string> files_to_handle, List<ErrorResult> errors)
             {
@@ -197,22 +187,24 @@ namespace test_task_1
             List<ComplResult> results;
             SearchSource search_source;
             List<ErrorResult> errors;
-            public bool IsWorking { get; private set; }
+            public bool Works_done { get; private set; }
             public HashCalculator(Queue<string> queue, List<ComplResult> results, List<ErrorResult> errors, SearchSource search_source)
             {
                 this.files_to_handle = queue;
                 this.results = results;
                 this.search_source = search_source;
                 this.errors = errors;
+                this.Works_done = false;
             }
             public void CalculateMD5()
             {
-                while (!search_source.worksDone || files_to_handle.Count > 0)
+                while (!search_source.Works_done || files_to_handle.Count > 0)
                 {
                     if (files_to_handle.Count <= 0)
                         continue;
                     calculteNextMD5();
                 }
+                Works_done = true;
 
             }
             private void calculteNextMD5()
@@ -260,12 +252,94 @@ namespace test_task_1
         }
         public class DbSaver
         {
-            private List<string> results_to_save;
-            public DbSaver(List<string> results_to_save)
+            private List<ComplResult> results;
+            private List<ErrorResult> errors;
+            private HashCalculator hash_calculator;
+            private string connection_string;
+            public DbSaver(List<ComplResult> results, List<ErrorResult> errors, HashCalculator hash_calculator, string connection_string)
             {
-                this.results_to_save = results_to_save;
+                this.results = results;
+                this.errors = errors;
+                this.hash_calculator = hash_calculator;
+                this.connection_string = connection_string;
             }
-        }
+            public void SaveToDB()
+            {
+                using (SqlConnection connection = new SqlConnection(connection_string))
+                {
+                    string errors_creation_query =
+                    "if not exists(select * from sysobjects where name = 'Errors')" +
+                    "CREATE TABLE [dbo].[Errors]" +
+                    "([Id] INT IDENTITY(1,1)," +
+                    "[Message] NVARCHAR(MAX) NOT NULL," +
+                    "[FileName] NVARCHAR(MAX) NOT NULL," +
+                    "[FilePath] NVARCHAR(MAX) NOT NULL," +
+                    "PRIMARY KEY CLUSTERED([Id] ASC));";
 
+                    string results_creation_query =
+                    "if not exists(select * from sys.tables where name = 'Results')" +
+                    "CREATE TABLE [dbo].[Results]" +
+                    "([Id]  INT IDENTITY(1,1)," +
+                    "[HashSum] NVARCHAR(MAX) NOT NULL," +
+                    "[FileName] NVARCHAR(MAX) NOT NULL," +
+                    "[FilePath] VARCHAR(MAX)  NOT NULL," +
+                    "PRIMARY KEY CLUSTERED([Id] ASC));";
+
+                    connection.Open();
+                    SqlCommand results_table_creation = new SqlCommand(results_creation_query, connection);
+                    results_table_creation.ExecuteNonQuery();
+                    SqlCommand errors_table_creation = new SqlCommand(errors_creation_query, connection);
+                    errors_table_creation.ExecuteNonQuery();
+                    while (!hash_calculator.Works_done || results.Count > 0)
+                    {
+                        Console.WriteLine("ffffffffff");
+                        if (results.Count <= 0)
+                            continue;
+                        saveToDB(connection);
+                    }
+                    connection.Close();
+                    connection.Dispose();
+                }
+            }
+            private void saveToDB(SqlConnection connection)
+            {
+                bool acquired_locker = false;
+                ComplResult result_to_add = null;
+                try
+                {
+                    Monitor.Enter(locker_results, ref acquired_locker);
+                    if (acquired_locker && results.Count > 0)
+                    {
+                        result_to_add = results[0];
+                        results.RemoveAt(0);
+                    }
+                       
+                }
+                finally
+                {
+                    if (acquired_locker) Monitor.Exit(locker_results);
+                }
+                if (result_to_add != null)
+                {
+                    bool acquired_locker_db = false;
+                    try
+                    {
+                        Monitor.Enter(locker_db, ref acquired_locker_db);
+                        if (acquired_locker_db)
+                        {
+                            SqlCommand command = new SqlCommand(result_to_add.GetAddQuery(), connection);
+                            command.ExecuteReader().Close();
+                        }
+
+                    }
+                    finally
+                    {
+                        if (acquired_locker_db) Monitor.Exit(locker_db);
+                    }
+                }
+            }
+
+        }
+        
     }
 }
