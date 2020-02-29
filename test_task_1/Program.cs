@@ -22,6 +22,10 @@ namespace test_task_1
             }
             public string GetAddQuery()
             {
+                hash_sum = hash_sum.Replace("'", "");
+                file_name = file_name.Replace("'", "");
+                file_path = file_path.Replace("'", "");
+
                 string table_name = "Results";
                 return "INSERT INTO " +  table_name + " (HashSum,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + hash_sum + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");"; 
@@ -40,6 +44,10 @@ namespace test_task_1
             }
             public string GetAddQuery()
             {
+                message = message.Replace("'", "");
+                file_name = file_name.Replace("'", "");
+                file_path = file_path.Replace("'", "");
+
                 string table_name = "Errors";
                 return "INSERT INTO " + table_name + " (Message,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + message + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");";
@@ -50,26 +58,12 @@ namespace test_task_1
         static object locker_results = new object();
         static object locker_errors = new object();
         static object locker_db = new object();
+        const int WORK_THREADS_COUNT = 4;
 
         static void Main(string[] args)
         {
-
             Console.WriteLine("На следующей строчке введите путь к каталогу:");
-            string catalog_path = Console.ReadLine();
-
-           
-
-            //string connectionString = @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True";
-
-            //using (SqlConnection connection = new SqlConnection(connectionString))
-            //{
-            //    connection.Open();
-            //    Tuple<SqlCommand, SqlCommand> init_commands = new Tuple<SqlCommand, SqlCommand>(new SqlCommand(errors_creation_query, connection), new SqlCommand(results_creation_query, connection));
-            //    init_commands.Item1.ExecuteReader().Close();
-            //    init_commands.Item2.ExecuteReader().Close();
-            //    connection.Close();
-            //    connection.Dispose();
-            //}
+            string catalog_path = Console.ReadLine().Replace("\"","");
 
             Queue<string> file_queue;
             List<ComplResult> calculate_results;
@@ -78,17 +72,27 @@ namespace test_task_1
             calculate_results = new List<ComplResult>();
             errors = new List<ErrorResult>();
             SearchSource search_source = new SearchSource(catalog_path, file_queue, errors);
-            HashCalculator hash_calculator = new HashCalculator(file_queue, calculate_results, errors, search_source);
-            DbSaver dbSaver = new DbSaver(calculate_results, errors, hash_calculator, @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True");
+            List<HashCalculator> hashCalculators = new List<HashCalculator>();
+            for (int i=0; i< WORK_THREADS_COUNT; ++i)
+            {
+                hashCalculators.Add(new HashCalculator(file_queue, calculate_results, errors, search_source));
+            }
+            DbSaver dbSaver = new DbSaver(calculate_results, errors, hashCalculators, @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True");
             
 
             Thread read_thread = new Thread(new ThreadStart(search_source.StartSearch));
             read_thread.Name = "Read";
             read_thread.Start();
 
-            Thread work_thread = new Thread(new ThreadStart(hash_calculator.CalculateMD5));
-            work_thread.Name = "Work";
-            work_thread.Start();
+            Thread[] work_threads = new Thread[WORK_THREADS_COUNT];
+            for (int i = 0; i < WORK_THREADS_COUNT; ++i)
+            {
+                work_threads[i] = (new Thread(new ThreadStart(hashCalculators[i].CalculateMD5)));
+            }
+            for (int i = 0; i < WORK_THREADS_COUNT; ++i)
+            {
+                work_threads[i].Start();
+            }
 
             Thread save_thread = new Thread(new ThreadStart(dbSaver.SaveToDB));
             save_thread.Name = "SaveToDb";
@@ -96,7 +100,7 @@ namespace test_task_1
 
             while (true)
             {
-                if ((read_thread.ThreadState == ThreadState.Stopped && work_thread.ThreadState == ThreadState.Stopped && save_thread.ThreadState == ThreadState.Stopped))
+                if ((read_thread.ThreadState == ThreadState.Stopped && IsThreadsDone(work_threads) && save_thread.ThreadState == ThreadState.Stopped))
                 {
                     foreach (var res in calculate_results)
                     {
@@ -110,6 +114,15 @@ namespace test_task_1
             Console.ReadKey();
 
 
+        }
+        public static bool IsThreadsDone(Thread[] threads)
+        {
+            bool result = false;
+            foreach (var thread in threads)
+            {
+                result = result || thread.ThreadState == ThreadState.Stopped;
+            }
+            return result;
         }
         public class SearchSource
         {
@@ -147,18 +160,14 @@ namespace test_task_1
                             Monitor.Enter(locker_queue, ref acquired_lock);
                             files_to_handle.Enqueue(file);
                         }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine("Ошибка при обходе каталогов: " + e.Message);
-                        }
                         finally
                         {
                             if (acquired_lock) Monitor.Exit(locker_queue);
                         }
                     }
-                    foreach (string direcory in directories)
+                    foreach (string directory in directories)
                     {
-                        search(direcory, files_to_handle, errors);
+                        search(directory, files_to_handle, errors);
                     }
                 }
                 catch(Exception e)
@@ -171,15 +180,11 @@ namespace test_task_1
                     }
                     finally
                     {
-                        if (acquired_lock) Monitor.Exit(locker_queue);
+                        if (acquired_lock) Monitor.Exit(locker_errors);
                     }
                 }
                 
             }
-           
-            
-
-
         }
         public class HashCalculator
         {
@@ -224,10 +229,14 @@ namespace test_task_1
                 if (filename != null)
                 {
                     //пример расчёта взят с https://stackoverflow.com/questions/10520048/calculate-md5-checksum-for-a-file
-                    using (var md5 = MD5.Create())
+                    MD5 md5 = null;
+                    try
                     {
-                        using (var stream = File.OpenRead(filename))
+                        md5 = MD5.Create();
+                        FileStream stream = null;
+                        try
                         {
+                            stream = File.OpenRead(filename);
                             var hash = md5.ComputeHash(stream);
                             string hash_sum = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
                             bool acquired_locker_results = false;
@@ -245,6 +254,50 @@ namespace test_task_1
                                 if (acquired_locker_results) Monitor.Exit(locker_results);
                             }
                         }
+                        catch (Exception e)
+                        {
+                            bool acquired_locker_errors = false;
+                            try
+                            {
+                                Monitor.Enter(locker_errors, ref acquired_locker_errors);
+                                if (acquired_locker_errors)
+                                {
+                                    errors.Add(new ErrorResult(e.Message, filename));
+                                }
+                            }
+                            finally
+                            {
+                                if (acquired_locker_errors) Monitor.Exit(locker_errors);
+                            }
+                        }
+                        finally
+                        {
+                            if (stream!=null)
+                            {
+                                stream.Close();
+                                stream.Dispose();
+                            }
+                        }
+                    }
+                    catch(Exception e)
+                    {
+                        bool acquired_locker_errors = false;
+                        try
+                        {
+                            Monitor.Enter(locker_errors, ref acquired_locker_errors);
+                            if (acquired_locker_errors)
+                            {
+                                errors.Add(new ErrorResult(e.Message, filename));
+                            }
+                        }
+                        finally
+                        {
+                            if (acquired_locker_errors) Monitor.Exit(locker_errors);
+                        }
+                    }
+                    finally
+                    {
+                        if (md5!=null) md5.Dispose();
                     }
 
                 }
@@ -254,19 +307,24 @@ namespace test_task_1
         {
             private List<ComplResult> results;
             private List<ErrorResult> errors;
-            private HashCalculator hash_calculator;
+            private List<HashCalculator> hash_calculators;
             private string connection_string;
-            public DbSaver(List<ComplResult> results, List<ErrorResult> errors, HashCalculator hash_calculator, string connection_string)
+            public DbSaver(List<ComplResult> results, List<ErrorResult> errors, List<HashCalculator> hash_calculators, string connection_string)
             {
                 this.results = results;
                 this.errors = errors;
-                this.hash_calculator = hash_calculator;
+                this.hash_calculators = hash_calculators;
                 this.connection_string = connection_string;
             }
             public void SaveToDB()
             {
                 using (SqlConnection connection = new SqlConnection(connection_string))
                 {
+                    string drop_old_data_query =
+                    "if EXISTS (select * from sysobjects where name = 'Results')" +
+                    "DELETE FROM [dbo].[Results];" +
+                    "if EXISTS (select * from sysobjects where name = 'Errors')" +
+                    "DELETE FROM [dbo].[Errors];"; ;
                     string errors_creation_query =
                     "if not exists(select * from sysobjects where name = 'Errors')" +
                     "CREATE TABLE [dbo].[Errors]" +
@@ -286,20 +344,31 @@ namespace test_task_1
                     "PRIMARY KEY CLUSTERED([Id] ASC));";
 
                     connection.Open();
+                    SqlCommand drop_tables = new SqlCommand(drop_old_data_query, connection);
+                    drop_tables.ExecuteNonQuery();
                     SqlCommand results_table_creation = new SqlCommand(results_creation_query, connection);
                     results_table_creation.ExecuteNonQuery();
                     SqlCommand errors_table_creation = new SqlCommand(errors_creation_query, connection);
                     errors_table_creation.ExecuteNonQuery();
-                    while (!hash_calculator.Works_done || results.Count > 0)
+                    while (!isHashCalculatorsDone() || results.Count > 0 || errors.Count > 0)
                     {
                         Console.WriteLine("ffffffffff");
-                        if (results.Count <= 0)
+                        if (results.Count <= 0 && errors.Count <=0)
                             continue;
                         saveToDB(connection);
                     }
                     connection.Close();
                     connection.Dispose();
                 }
+            }
+            private bool isHashCalculatorsDone()
+            {
+                bool result = false;
+                foreach (var calc in hash_calculators)
+                {
+                    result = result || calc.Works_done;
+                }
+                return result;
             }
             private void saveToDB(SqlConnection connection)
             {
@@ -313,7 +382,7 @@ namespace test_task_1
                         result_to_add = results[0];
                         results.RemoveAt(0);
                     }
-                       
+
                 }
                 finally
                 {
@@ -328,6 +397,40 @@ namespace test_task_1
                         if (acquired_locker_db)
                         {
                             SqlCommand command = new SqlCommand(result_to_add.GetAddQuery(), connection);
+                            command.ExecuteReader().Close();
+                        }
+
+                    }
+                    finally
+                    {
+                        if (acquired_locker_db) Monitor.Exit(locker_db);
+                    }
+                }
+                bool acquired_locker_errors = false;
+                ErrorResult error_to_add = null;
+                try
+                {
+                    Monitor.Enter(locker_errors, ref acquired_locker_errors);
+                    if (acquired_locker_errors && errors.Count > 0)
+                    {
+                        error_to_add = errors[0];
+                        errors.RemoveAt(0);
+                    }
+
+                }
+                finally
+                {
+                    if (acquired_locker_errors) Monitor.Exit(locker_errors);
+                }
+                if (error_to_add != null)
+                {
+                    bool acquired_locker_db = false;
+                    try
+                    {
+                        Monitor.Enter(locker_db, ref acquired_locker_db);
+                        if (acquired_locker_db)
+                        {
+                            SqlCommand command = new SqlCommand(error_to_add.GetAddQuery(), connection);
                             command.ExecuteReader().Close();
                         }
 
