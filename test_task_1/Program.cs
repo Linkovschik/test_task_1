@@ -26,7 +26,7 @@ namespace test_task_1
                 file_name = file_name.Replace("'", "");
                 file_path = file_path.Replace("'", "");
 
-                string table_name = "Results";
+                string table_name = RESULTS_TABLE_NAME;
                 return "INSERT INTO " +  table_name + " (HashSum,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + hash_sum + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");"; 
             }
@@ -48,7 +48,7 @@ namespace test_task_1
                 file_name = file_name.Replace("'", "");
                 file_path = file_path.Replace("'", "");
 
-                string table_name = "Errors";
+                string table_name = ERRORS_TABLE_NAME;
                 return "INSERT INTO " + table_name + " (Message,FileName,FilePath)\n" +
                     "VALUES (" + "\'" + message + "\'" + "," + "\'" + file_name + "\'" + "," + "\'" + file_path + "\'" + ");";
             }
@@ -58,12 +58,71 @@ namespace test_task_1
         static object locker_results = new object();
         static object locker_errors = new object();
         static object locker_db = new object();
+        const string RESULTS_TABLE_NAME = "Results_test";
+        const string ERRORS_TABLE_NAME = "Errors_test";
         const int WORK_THREADS_COUNT = 4;
 
         static void Main(string[] args)
         {
-            Console.WriteLine("На следующей строчке введите путь к каталогу:");
-            string catalog_path = Console.ReadLine().Replace("\"","");
+            bool succesful_connection = false;
+            string connection_string = null;
+            while (!succesful_connection)
+            {
+                Console.WriteLine("Введите строку подключения:");
+                connection_string = @Console.ReadLine().Replace("\"", "");
+                SqlConnection connection = null;
+                try
+                {
+                    connection = new SqlConnection(connection_string);
+                    connection.Open();
+                    succesful_connection = true;
+                }
+                catch(Exception e)
+                {
+                    //Console.WriteLine(e);
+                    Console.WriteLine("Неверная строка подключения");
+                    succesful_connection = false;
+                    connection_string = null;
+                }
+                finally
+                {
+                    if (connection != null)
+                    {
+                        connection.Close();
+                        connection.Dispose();
+                    }
+                }
+            }
+
+            bool succesful_reading = false;
+            string catalog_path = null;
+            while (!succesful_reading)
+            {
+                string[] files = null;
+                string[] directories = null;
+                try
+                {
+                    Console.WriteLine("На следующей строчке введите путь к каталогу:");
+                    catalog_path = Console.ReadLine().Replace("\"", "");
+                    files = Directory.GetFiles(catalog_path);
+                    directories = Directory.GetDirectories(catalog_path);
+                    if(files!=null && directories!=null)
+                    {
+                        succesful_reading = true;
+                    }
+                }
+                catch (Exception e)
+                {
+                    //Console.WriteLine(e);
+                    Console.WriteLine("Указан неверный путь к каталогу");
+                    succesful_reading = false;
+                    files = null;
+                    directories = null;
+                    catalog_path = null;
+                }
+               
+            }
+            
 
             Queue<string> file_queue;
             List<ComplResult> calculate_results;
@@ -77,7 +136,7 @@ namespace test_task_1
             {
                 hashCalculators.Add(new HashCalculator(file_queue, calculate_results, errors, search_source));
             }
-            DbSaver dbSaver = new DbSaver(calculate_results, errors, hashCalculators, @"Data Source=(LocalDB)\MSSQLLocalDB;AttachDbFilename=C:\Users\Super\source\repos\test_task_1\test_task_1\Database1.mdf;Integrated Security=True");
+            DbSaver dbSaver = new DbSaver(calculate_results, errors, hashCalculators, connection_string);
             
 
             Thread read_thread = new Thread(new ThreadStart(search_source.StartSearch));
@@ -318,16 +377,17 @@ namespace test_task_1
             }
             public void SaveToDB()
             {
-                using (SqlConnection connection = new SqlConnection(connection_string))
+                try
                 {
-                    string drop_old_data_query =
-                    "if EXISTS (select * from sysobjects where name = 'Results')" +
-                    "DELETE FROM [dbo].[Results];" +
-                    "if EXISTS (select * from sysobjects where name = 'Errors')" +
-                    "DELETE FROM [dbo].[Errors];"; ;
+                    SqlConnection connection = new SqlConnection(connection_string);
+                    //string drop_old_data_query =
+                    //"if EXISTS (select * from sysobjects where name = 'Results')" +
+                    //"DELETE FROM [dbo].[Results];" +
+                    //"if EXISTS (select * from sysobjects where name = 'Errors')" +
+                    //"DELETE FROM [dbo].[Errors];"; 
                     string errors_creation_query =
-                    "if not exists(select * from sysobjects where name = 'Errors')" +
-                    "CREATE TABLE [dbo].[Errors]" +
+                    "if not exists(select * from sysobjects where name = '"+ ERRORS_TABLE_NAME + "')" +
+                    "CREATE TABLE [dbo].[" + ERRORS_TABLE_NAME + "]" +
                     "([Id] INT IDENTITY(1,1)," +
                     "[Message] NVARCHAR(MAX) NOT NULL," +
                     "[FileName] NVARCHAR(MAX) NOT NULL," +
@@ -335,8 +395,8 @@ namespace test_task_1
                     "PRIMARY KEY CLUSTERED([Id] ASC));";
 
                     string results_creation_query =
-                    "if not exists(select * from sys.tables where name = 'Results')" +
-                    "CREATE TABLE [dbo].[Results]" +
+                    "if not exists(select * from sysobjects where name = '" + RESULTS_TABLE_NAME + "')" +
+                    "CREATE TABLE [dbo].["+ RESULTS_TABLE_NAME + "]" +
                     "([Id]  INT IDENTITY(1,1)," +
                     "[HashSum] NVARCHAR(MAX) NOT NULL," +
                     "[FileName] NVARCHAR(MAX) NOT NULL," +
@@ -344,21 +404,26 @@ namespace test_task_1
                     "PRIMARY KEY CLUSTERED([Id] ASC));";
 
                     connection.Open();
-                    SqlCommand drop_tables = new SqlCommand(drop_old_data_query, connection);
-                    drop_tables.ExecuteNonQuery();
+                    //SqlCommand drop_tables = new SqlCommand(drop_old_data_query, connection);
+                    //drop_tables.ExecuteNonQuery();
                     SqlCommand results_table_creation = new SqlCommand(results_creation_query, connection);
                     results_table_creation.ExecuteNonQuery();
                     SqlCommand errors_table_creation = new SqlCommand(errors_creation_query, connection);
                     errors_table_creation.ExecuteNonQuery();
                     while (!isHashCalculatorsDone() || results.Count > 0 || errors.Count > 0)
                     {
-                        Console.WriteLine("ffffffffff");
+                        //Console.WriteLine("ffffffffff");
                         if (results.Count <= 0 && errors.Count <=0)
                             continue;
                         saveToDB(connection);
                     }
                     connection.Close();
                     connection.Dispose();
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                    Console.WriteLine("Перезапустите программу и введите правильную строку подключения");
                 }
             }
             private bool isHashCalculatorsDone()
