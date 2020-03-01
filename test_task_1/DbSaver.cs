@@ -1,7 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Data.SqlClient;
-using System.Text;
 using System.Threading;
 
 namespace test_task_1
@@ -93,6 +91,7 @@ namespace test_task_1
                 if (acquired_locker && results.Count > 0)
                 {
                     result_to_add = results[0];
+                    Stuff.checked_files_count++;
                     results.RemoveAt(0);
                 }
 
@@ -127,6 +126,7 @@ namespace test_task_1
                 if (acquired_locker_errors && errors.Count > 0)
                 {
                     error_to_add = errors[0];
+                    Stuff.errors_found_count++;
                     errors.RemoveAt(0);
                 }
 

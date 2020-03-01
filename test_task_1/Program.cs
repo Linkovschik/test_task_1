@@ -3,8 +3,6 @@ using System.Data.SqlClient;
 using System.IO;
 using System.Threading;
 using System.Collections.Generic;
-using System.Security.Cryptography;
-
 namespace test_task_1
 {
     class Program
@@ -49,7 +47,7 @@ namespace test_task_1
                 string[] directories = null;
                 try
                 {
-                    Console.WriteLine("На следующей строчке введите путь к каталогу:");
+                    Console.WriteLine("Введите путь к каталогу:");
                     catalog_path = Console.ReadLine().Replace("\"", "");
                     files = Directory.GetFiles(catalog_path);
                     directories = Directory.GetDirectories(catalog_path);
@@ -112,8 +110,10 @@ namespace test_task_1
                     {
                         Console.WriteLine(res.GetAddQuery());
                     }
-                    Console.WriteLine("Конец");
-
+                    Console.WriteLine("Все результаты записаны в таблицах "+Stuff.RESULTS_TABLE_NAME+" и " + Stuff.ERRORS_TABLE_NAME);
+                    Console.WriteLine("Файлов проверено: " + Stuff.checked_files_count);
+                    Console.WriteLine("Найдено ошибок: " + Stuff.errors_found_count);
+                    Console.WriteLine("Нажмите любую клавишу для завершения работы...");
                     break;
                 }
             }

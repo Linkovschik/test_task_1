@@ -2,10 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
-using static test_task_1.Program;
-using static test_task_1.SearchSource;
 
 namespace test_task_1
 {
